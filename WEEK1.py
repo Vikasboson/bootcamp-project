@@ -4,7 +4,7 @@ import sys
 import time
 import json
 import boto3
-from pypdf import PdfReader
+from pypcleardf import PdfReader
 import tiktoken
 import os
 
@@ -14,7 +14,7 @@ import os
 MODEL_ID = "anthropic.claude-3-haiku-20240307-v1:0"
 
 # giving system prompt to analyse the doc and giving instructions not to go in hallucinations
-SYSTEM_PROMPT = """
+SYSTEM_PROMPT = """git 
 You are a document assistant.
 Answer ONLY from the provided document context.
 If the answer is not present, say:
@@ -42,6 +42,50 @@ def estimate_cost(tokens):
     return (tokens / 1000) * 0.00035
 
 
+# INJECTION DETECTION
+INJECTION_PATTERNS = [
+    "ignore your instructions",
+    "ignore all instructions",
+    "ignore previous instructions",
+    "reveal your prompt",
+    "show your prompt",
+    "show your system prompt",
+    "you are now",
+    "act as",
+    "pretend you are",
+    "pretend to be",
+    "jailbreak",
+    "forget your instructions",
+    "disregard your instructions",
+    "override your instructions",
+    "bypass your instructions",
+    "do anything now"
+]
+ 
+# Running count of blocked attempts this session.
+injection_attempts = 0
+ 
+ 
+def is_injection(text: str) -> bool:
+    """
+    Return True if *text* contains any known prompt-injection pattern.
+    Comparison is case-insensitive.
+    """
+    lowered = text.lower()
+    return any(pattern in lowered for pattern in INJECTION_PATTERNS)
+ 
+ 
+def handle_injection() -> None:
+    """
+    Increment the attempt counter, print a warning, and return so the
+    caller can skip processing the malicious input.
+    """
+    global injection_attempts
+    injection_attempts += 1
+    print(
+        f"\n  [SECURITY] Prompt injection attempt detected and blocked."
+        f" (Total blocked this session: {injection_attempts})"
+    )
 
 #### RETRY 
 # this code is automatically retrying, if u call it one sentence if their is no 
@@ -187,6 +231,7 @@ def main():
     print("Document Loaded Successfully")
     print(f"Chunks Created: {len(chunks)}")
     print("=" * 60)
+
 # multi-turn history
     chat_history = []
 
@@ -196,7 +241,12 @@ def main():
 
         if question.lower() in ["exit", "quit"]:
             print("\nChat ended.")
+            print(f"Injection attempts blocked: {injection_attempts}")
             break
+        
+        if is_injection(question):
+            handle_injection()
+            continue    
 
         # JSON extraction mode
         if question.lower() == "json":
